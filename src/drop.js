@@ -1,34 +1,8 @@
 (function () {
-  ngFileUpload.directive('ngfDrop', ['$parse', '$timeout', '$window', 'Upload', '$http', '$q',
-    function ($parse, $timeout, $window, Upload, $http, $q) {
-      return {
-        restrict: 'AEC',
-        require: '?ngModel',
-        link: function (scope, elem, attr, ngModel) {
-          linkDrop(scope, elem, attr, ngModel, $parse, $timeout, $window, Upload, $http, $q);
-        }
-      };
-    }]);
-
-  ngFileUpload.directive('ngfNoFileDrop', function () {
-    return function (scope, elem) {
-      if (dropAvailable()) elem.css('display', 'none');
-    };
-  });
-
-  ngFileUpload.directive('ngfDropAvailable', ['$parse', '$timeout', 'Upload', function ($parse, $timeout, Upload) {
-    return function (scope, elem, attr) {
-      if (dropAvailable()) {
-        var model = $parse(Upload.attrGetter('ngfDropAvailable', attr));
-        $timeout(function () {
-          model(scope);
-          if (model.assign) {
-            model.assign(scope, true);
-          }
-        });
-      }
-    };
-  }]);
+  function dropAvailable() {
+    var div = document.createElement('div');
+    return ('draggable' in div) && ('ondrop' in div) && !/Edge\/12./i.test(navigator.userAgent);
+  }
 
   function linkDrop(scope, elem, attr, ngModel, $parse, $timeout, $window, upload, $http, $q) {
     var available = dropAvailable();
@@ -66,23 +40,32 @@
     var dragOverDelay = 1;
     var actualDragOverClass;
 
-    scope.$on('$destroy', function () {
-      elem[0].removeEventListener('dragover', onDragOver, false);
-      elem[0].removeEventListener('dragenter', onDragEnter, false);
-      elem[0].removeEventListener('dragleave', onDragLeave, false);
-      elem[0].removeEventListener('drop', onDrop, false);
-      elem[0].removeEventListener('paste', onPaste, false);
-
-      if (navigator.userAgent.toLowerCase().indexOf('firefox') > -1 && attrGetter('ngfEnableFirefoxPaste', scope)) {
-        elem.off('keypress', onKeyPress);
+    function calculateDragOverClass(scope, attr, evt, callback) {
+      var obj = attrGetter('ngfDragOverClass', scope, {$event: evt}), dClass = 'dragover';
+      if (angular.isString(obj)) {
+        dClass = obj;
+      } else if (obj) {
+        if (obj.delay) dragOverDelay = obj.delay;
+        if (obj.accept || obj.reject) {
+          var items = evt.dataTransfer.items;
+          if (items == null || !items.length) {
+            dClass = obj.accept;
+          } else {
+            var pattern = obj.pattern || attrGetter('ngfPattern', scope, {$event: evt});
+            var len = items.length;
+            while (len--) {
+              if (!upload.validatePattern(items[len], pattern)) {
+                dClass = obj.reject;
+                break;
+              } else {
+                dClass = obj.accept;
+              }
+            }
+          }
+        }
       }
-    });
-
-    elem[0].addEventListener('dragover', onDragOver, false);
-    elem[0].addEventListener('dragenter', onDragEnter, false);
-    elem[0].addEventListener('dragleave',onDragLeave, false);
-    elem[0].addEventListener('drop', onDrop, false);
-    elem[0].addEventListener('paste', onPaste, false);
+      callback(dClass);
+    }
 
     function onDragOver(evt) {
       if (isDisabled() || !upload.shouldUpdateOn('drop', attr, scope)) return;
@@ -121,57 +104,6 @@
       }, dragOverDelay || 100);
     }
 
-    function onDrop(evt) {
-      if (isDisabled() || !upload.shouldUpdateOn('drop', attr, scope)) return;
-      evt.preventDefault();
-      if (stopPropagation(scope)) evt.stopPropagation();
-      if (actualDragOverClass) elem.removeClass(actualDragOverClass);
-      actualDragOverClass = null;
-      extractFilesAndUpdateModel(evt.dataTransfer, evt, 'dropUrl');
-    }
-
-    function onPaste(evt) {
-      if (navigator.userAgent.toLowerCase().indexOf('firefox') > -1 &&
-        attrGetter('ngfEnableFirefoxPaste', scope)) {
-        evt.preventDefault();
-      }
-      if (isDisabled() || !upload.shouldUpdateOn('paste', attr, scope)) return;
-      extractFilesAndUpdateModel(evt.clipboardData || evt.originalEvent.clipboardData, evt, 'pasteUrl');
-    }
-
-    function onKeyPress(e) {
-      if (!e.metaKey && !e.ctrlKey) {
-        e.preventDefault();
-      }
-    }
-
-    if (navigator.userAgent.toLowerCase().indexOf('firefox') > -1 &&
-      attrGetter('ngfEnableFirefoxPaste', scope)) {
-      elem.attr('contenteditable', true);
-      elem.on('keypress', onKeyPress);
-    }
-
-    function extractFilesAndUpdateModel(source, evt, updateOnType) {
-      if (!source) return;
-      // html needs to be calculated on the same process otherwise the data will be wiped
-      // after promise resolve or setTimeout.
-      var html;
-      try {
-        html = source && source.getData && source.getData('text/html');
-      } catch (e) {/* Fix IE11 that throw error calling getData */
-      }
-      extractFiles(source.items, source.files, attrGetter('ngfAllowDir', scope) !== false,
-        attrGetter('multiple') || attrGetter('ngfMultiple', scope)).then(function (files) {
-        if (files.length) {
-          updateModel(files, evt);
-        } else {
-          extractFilesFromHtml(updateOnType, html).then(function (files) {
-            updateModel(files, evt);
-          });
-        }
-      });
-    }
-
     function updateModel(files, evt) {
       upload.updateModel(ngModel, attr, scope, attrGetter('ngfChange') || attrGetter('ngfDrop'), files, evt);
     }
@@ -198,33 +130,6 @@
         return defer.promise;
       }
       return upload.emptyPromise();
-    }
-
-    function calculateDragOverClass(scope, attr, evt, callback) {
-      var obj = attrGetter('ngfDragOverClass', scope, {$event: evt}), dClass = 'dragover';
-      if (angular.isString(obj)) {
-        dClass = obj;
-      } else if (obj) {
-        if (obj.delay) dragOverDelay = obj.delay;
-        if (obj.accept || obj.reject) {
-          var items = evt.dataTransfer.items;
-          if (items == null || !items.length) {
-            dClass = obj.accept;
-          } else {
-            var pattern = obj.pattern || attrGetter('ngfPattern', scope, {$event: evt});
-            var len = items.length;
-            while (len--) {
-              if (!upload.validatePattern(items[len], pattern)) {
-                dClass = obj.reject;
-                break;
-              } else {
-                dClass = obj.accept;
-              }
-            }
-          }
-        }
-      }
-      callback(dClass);
     }
 
     function extractFiles(items, fileList, allowDir, multiple) {
@@ -349,11 +254,106 @@
 
       return defer.promise;
     }
+
+    function extractFilesAndUpdateModel(source, evt, updateOnType) {
+      if (!source) return;
+      // html needs to be calculated on the same process otherwise the data will be wiped
+      // after promise resolve or setTimeout.
+      var html;
+      try {
+        html = source && source.getData && source.getData('text/html');
+      } catch (e) {/* Fix IE11 that throw error calling getData */
+      }
+      extractFiles(source.items, source.files, attrGetter('ngfAllowDir', scope) !== false,
+        attrGetter('multiple') || attrGetter('ngfMultiple', scope)).then(function (files) {
+        if (files.length) {
+          updateModel(files, evt);
+        } else {
+          extractFilesFromHtml(updateOnType, html).then(function (files) {
+            updateModel(files, evt);
+          });
+        }
+      });
+    }
+
+    function onDrop(evt) {
+      if (isDisabled() || !upload.shouldUpdateOn('drop', attr, scope)) return;
+      evt.preventDefault();
+      if (stopPropagation(scope)) evt.stopPropagation();
+      if (actualDragOverClass) elem.removeClass(actualDragOverClass);
+      actualDragOverClass = null;
+      extractFilesAndUpdateModel(evt.dataTransfer, evt, 'dropUrl');
+    }
+
+    function onPaste(evt) {
+      if (navigator.userAgent.toLowerCase().indexOf('firefox') > -1 &&
+        attrGetter('ngfEnableFirefoxPaste', scope)) {
+        evt.preventDefault();
+      }
+      if (isDisabled() || !upload.shouldUpdateOn('paste', attr, scope)) return;
+      extractFilesAndUpdateModel(evt.clipboardData || evt.originalEvent.clipboardData, evt, 'pasteUrl');
+    }
+
+    function onKeyPress(e) {
+      if (!e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+      }
+    }
+
+    scope.$on('$destroy', function () {
+      elem[0].removeEventListener('dragover', onDragOver, false);
+      elem[0].removeEventListener('dragenter', onDragEnter, false);
+      elem[0].removeEventListener('dragleave', onDragLeave, false);
+      elem[0].removeEventListener('drop', onDrop, false);
+      elem[0].removeEventListener('paste', onPaste, false);
+
+      if (navigator.userAgent.toLowerCase().indexOf('firefox') > -1 && attrGetter('ngfEnableFirefoxPaste', scope)) {
+        elem.off('keypress', onKeyPress);
+      }
+    });
+
+    elem[0].addEventListener('dragover', onDragOver, false);
+    elem[0].addEventListener('dragenter', onDragEnter, false);
+    elem[0].addEventListener('dragleave',onDragLeave, false);
+    elem[0].addEventListener('drop', onDrop, false);
+    elem[0].addEventListener('paste', onPaste, false);
+
+    if (navigator.userAgent.toLowerCase().indexOf('firefox') > -1 &&
+      attrGetter('ngfEnableFirefoxPaste', scope)) {
+      elem.attr('contenteditable', true);
+      elem.on('keypress', onKeyPress);
+    }
   }
 
-  function dropAvailable() {
-    var div = document.createElement('div');
-    return ('draggable' in div) && ('ondrop' in div) && !/Edge\/12./i.test(navigator.userAgent);
-  }
+  ngFileUpload.directive('ngfDrop', ['$parse', '$timeout', '$window', 'Upload', '$http', '$q',
+    function ($parse, $timeout, $window, Upload, $http, $q) {
+      return {
+        restrict: 'AEC',
+        require: '?ngModel',
+        link: function (scope, elem, attr, ngModel) {
+          linkDrop(scope, elem, attr, ngModel, $parse, $timeout, $window, Upload, $http, $q);
+        }
+      };
+    }]);
+
+  ngFileUpload.directive('ngfNoFileDrop', function () {
+    return function (scope, elem) {
+      if (dropAvailable()) elem.css('display', 'none');
+    };
+  });
+
+  ngFileUpload.directive('ngfDropAvailable', ['$parse', '$timeout', 'Upload', function ($parse, $timeout, Upload) {
+    return function (scope, elem, attr) {
+      if (dropAvailable()) {
+        var model = $parse(Upload.attrGetter('ngfDropAvailable', attr));
+        $timeout(function () {
+          model(scope);
+          if (model.assign) {
+            model.assign(scope, true);
+          }
+        });
+      }
+    };
+  }]);
 
 })();
